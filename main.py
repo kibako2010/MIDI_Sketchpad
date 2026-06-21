@@ -4,122 +4,22 @@ import os
 import sys
 import json
 import random
-from copy import deepcopy
+import shutil
 
 from config import OUTPUT_DIR
-from chord_parser import parse_midi_to_chords, chords_from_text, estimate_key_and_scale
 from prompt_interpreter import interpret_prompt, test_lm_studio_connection
 from chord_generator import generate_chords
-from style_planner import plan_style
-from humanizer import apply_humanize
-from midi_renderer import export_part_files, export_merged_file
-
-from generators.drums import DrumsGenerator, PercussionGenerator
-from generators.bass import BassGenerator
-from generators.guitar import GuitarGenerator
-from generators.fiddle import FiddleGenerator
-from generators.whistle import WhistleGenerator
-from generators.pad import PadGenerator
-from generators.piano import PianoGenerator
-from generators.lead_synth import LeadSynthGenerator
-from generators.chord_track import ChordTrackGenerator
+from midi_renderer import (
+    export_part_files,
+    export_merged_file,
+    export_merged_from_part_midis,
+)
+from engine.generation_engine import GenerationEngine
+from engine.variation_profiles import apply_variation_profile
+from engine.session_utils import resolve_part_file_map
 
 
-def build_generators(chords, key, scale, params, bars, ticks_per_beat, time_sig, seed):
-    parts = params.get("parts", {})
-    kwargs = dict(
-        chords=chords,
-        key=key,
-        scale=scale,
-        params=params,
-        bars=bars,
-        ticks_per_beat=ticks_per_beat,
-        time_sig=time_sig,
-        seed=seed,
-    )
-    gens = {}
-    if parts.get("drums", True):
-        gens["Drums"] = DrumsGenerator(**kwargs)
-    if parts.get("percussion", True):
-        gens["Percussion"] = PercussionGenerator(**kwargs)
-    if parts.get("bass", True):
-        gens["Bass"] = BassGenerator(**kwargs)
-    if parts.get("acoustic_guitar", True):
-        gens["Guitar"] = GuitarGenerator(**kwargs)
-    if parts.get("fiddle", True):
-        gens["Fiddle"] = FiddleGenerator(**kwargs)
-    if parts.get("tin_whistle", True):
-        gens["Whistle"] = WhistleGenerator(**kwargs)
-    if parts.get("pad_strings", True):
-        gens["Pad"] = PadGenerator(**kwargs)
-    if parts.get("piano", False):
-        gens["Piano"] = PianoGenerator(**kwargs)
-    if parts.get("lead_synth", False):
-        gens["Lead"] = LeadSynthGenerator(**kwargs)
-    gens["ChordTrack"] = ChordTrackGenerator(**kwargs)
-    return gens
-
-
-def _resolve_chords(args, params, use_llm):
-    if args.generate_chords:
-        print("[2/5] コード進行を生成中...")
-        result = generate_chords(params, args.bars, args.seed or 42, use_llm)
-        chords = result["chords"]
-        key = result["key"]
-        scale = result["scale"]
-    elif args.midi:
-        print(f"[2/5] MIDIファイルからコード進行を解析: {args.midi}")
-        chords = parse_midi_to_chords(args.midi, bars=args.bars)
-        key, scale = estimate_key_and_scale(chords)
-    else:
-        print(f"[2/5] テキストからコード進行をパース: {args.chords}")
-        chords = chords_from_text(args.chords)
-        key, scale = estimate_key_and_scale(chords)
-
-    print(f"       コード: {' | '.join(chords)}")
-    print(f"       キー: {key} / スケール: {scale}")
-    return chords, key, scale
-
-
-def _render_and_export(chords, key, scale, params, bars, out_dir, seed, merge=False, selected_parts=None):
-    plan = plan_style(params, chords, key, scale)
-    bpm = plan["bpm"]
-    time_sig = plan["time_sig"]
-    scale = plan["scale"]
-    key = plan["key"]
-    print(f"[3/5] BPM: {bpm} | 拍子: {time_sig[0]}/{time_sig[1]} | キー: {key} | スケール: {scale}")
-
-    ticks_per_beat = 480
-    print(f"[4/5] MIDI生成 (seed={seed}, {bars}bars) ...")
-    gens = build_generators(chords, key, scale, params, bars, ticks_per_beat, time_sig, seed)
-
-    if selected_parts is not None:
-        normalized = {p.lower() for p in selected_parts}
-        gens = {name: gen for name, gen in gens.items() if name.lower() in normalized}
-
-    all_events = {}
-    for part_name, gen in gens.items():
-        events = gen.generate()
-        if params.get("post_humanize", False):
-            events = apply_humanize(events, params, seed=seed)
-        all_events[part_name] = events
-        print(f"       {part_name}: {len(events)} events")
-
-    print(f"\n[5/5] MIDIファイル書き出し -> {out_dir}")
-    written = export_part_files(all_events, out_dir, bpm, ticks_per_beat, time_sig)
-
-    if merge:
-        merged_path = os.path.join(out_dir, "All_Parts.mid")
-        export_merged_file(all_events, merged_path, bpm, ticks_per_beat, time_sig)
-
-    return {
-        "written": written,
-        "bpm": bpm,
-        "time_sig": list(time_sig),
-        "scale": scale,
-        "key": key,
-        "events": all_events,
-    }
+ENGINE = GenerationEngine()
 
 
 def _save_session(path, payload):
@@ -128,30 +28,63 @@ def _save_session(path, payload):
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
-def _variation_preset(label, base_params):
-    p = deepcopy(base_params)
-    name = label.strip().lower()
+def _list_to_part_map(file_paths):
+    result = {}
+    for p in file_paths:
+        name = os.path.splitext(os.path.basename(p))[0]
+        result[name] = p
+    return result
 
-    if name == "folk":
-        p["style"] = "anime_irish"
-        p["folk"] = 92
-        p["anime"] = max(45, p.get("anime", 70))
-        p["rock"] = 15
-    elif name == "anime":
-        p["style"] = "anime_irish"
-        p["anime"] = 95
-        p["orchestral"] = 78
-        p["density"] = max(70, p.get("density", 60))
-    elif name == "rock":
-        p["style"] = "celtic_rock"
-        p["rock"] = 92
-        p["energy"] = max(82, p.get("energy", 70))
-        p["folk"] = max(55, p.get("folk", 70))
-    elif name == "weird":
-        p["style"] = "anime_irish"
-        p["weirdness"] = 88
-        p["complexity"] = max(82, p.get("complexity", 60))
-    return p
+
+def _render_and_export(chords, key, scale, params, bars, out_dir, seed, merge=False, selected_parts=None):
+    render = ENGINE.render_events(
+        chords=chords,
+        key=key,
+        scale=scale,
+        params=params,
+        bars=bars,
+        seed=seed,
+        selected_parts=selected_parts,
+    )
+
+    print(
+        f"[3/5] BPM: {render['bpm']} | 拍子: {render['time_sig'][0]}/{render['time_sig'][1]} | "
+        f"キー: {render['key']} | スケール: {render['scale']}"
+    )
+    print(f"[4/5] MIDI生成 (seed={seed}, {bars}bars) ...")
+    for part_name, events in render["events"].items():
+        print(f"       {part_name}: {len(events)} events")
+
+    print(f"\n[5/5] MIDIファイル書き出し -> {out_dir}")
+    written = export_part_files(
+        render["events"],
+        out_dir,
+        render["bpm"],
+        render["ticks_per_beat"],
+        tuple(render["time_sig"]),
+    )
+
+    merged_path = None
+    if merge:
+        merged_path = os.path.join(out_dir, "All_Parts.mid")
+        export_merged_file(
+            render["events"],
+            merged_path,
+            render["bpm"],
+            render["ticks_per_beat"],
+            tuple(render["time_sig"]),
+        )
+
+    return {
+        "written": written,
+        "part_file_map": _list_to_part_map(written),
+        "merged_path": merged_path,
+        "bpm": render["bpm"],
+        "time_sig": render["time_sig"],
+        "scale": render["scale"],
+        "key": render["key"],
+        "ticks_per_beat": render["ticks_per_beat"],
+    }
 
 
 def _run_variations(args, params, chords, key, scale):
@@ -161,7 +94,7 @@ def _run_variations(args, params, chords, key, scale):
         sys.exit(1)
 
     for idx, label in enumerate(labels):
-        var_params = _variation_preset(label, params)
+        var_params = apply_variation_profile(label, params)
         var_seed = (args.seed if args.seed is not None else 42) + idx
         out_dir = os.path.join(args.output or OUTPUT_DIR, f"Variation_{label}")
         print(f"\n=== Variation: {label} ===")
@@ -175,6 +108,7 @@ def _run_variations(args, params, chords, key, scale):
             seed=var_seed,
             merge=args.merge,
         )
+
         state = {
             "mode": "variation",
             "variation": label,
@@ -188,6 +122,7 @@ def _run_variations(args, params, chords, key, scale):
             "bars": args.bars,
             "params": var_params,
             "part_files": result["written"],
+            "merged_file": result["merged_path"],
         }
         _save_session(os.path.join(out_dir, "session.json"), state)
 
@@ -218,9 +153,13 @@ def _run_regenerate(args):
     seed = args.seed if args.seed is not None else random.randint(0, 99999)
 
     print("\n=== MIDI Sketchpad: Regenerate Mode ===\n")
-    print(f"[1/3] session読み込み: {args.session}")
+    print(f"[1/4] session読み込み: {args.session}")
     print(f"       対象パート: {requested}")
 
+    # 既存パートの場所を解決
+    existing_part_map = resolve_part_file_map(state.get("part_files", []), args.session)
+
+    # 指定パートのみ再生成
     result = _render_and_export(
         chords=chords,
         key=key,
@@ -233,15 +172,45 @@ def _run_regenerate(args):
         selected_parts=requested,
     )
 
+    regenerated_map = result["part_file_map"]
+
+    # 既存パート + 再生成パートを完全再統合
+    final_part_map = dict(existing_part_map)
+    final_part_map.update(regenerated_map)
+
+    # 再生成していない既存パートを出力先にコピーしてセットを揃える
+    for part_name, src_path in list(final_part_map.items()):
+        if part_name in regenerated_map:
+            continue
+        dst_path = os.path.join(out_dir, f"{part_name}.mid")
+        if os.path.abspath(src_path) != os.path.abspath(dst_path):
+            shutil.copy2(src_path, dst_path)
+        final_part_map[part_name] = dst_path
+
+    print("[4/4] 全パート完全mergeを再構築...")
+    merged_path = os.path.join(out_dir, "All_Parts.mid")
+    export_merged_from_part_midis(
+        final_part_map,
+        merged_path,
+        bpm=result["bpm"],
+        ticks_per_beat=result["ticks_per_beat"],
+        time_sig=tuple(result["time_sig"]),
+    )
+
     regen_state = {
         "mode": "regenerate",
         "source_session": args.session,
         "regenerated_parts": requested,
         "seed": seed,
-        "part_files": result["written"],
+        "key": result["key"],
+        "scale": result["scale"],
+        "bpm": result["bpm"],
+        "time_sig": result["time_sig"],
+        "part_files": list(final_part_map.values()),
+        "merged_file": merged_path,
     }
     _save_session(os.path.join(out_dir, "session_regenerate.json"), regen_state)
-    print("\n完了! 指定パートのみ再生成しました。")
+    print("\n完了! 指定パート再生成 + 既存パート再統合 + All_Parts再構築を実行しました。")
 
 
 def run(args):
@@ -271,7 +240,16 @@ def run(args):
     )
     print(f"       Parts: {params.get('parts')}")
 
-    chords, key, scale = _resolve_chords(args, params, use_llm)
+    if args.generate_chords:
+        print("[2/5] コード進行を生成中...")
+    elif args.midi:
+        print(f"[2/5] MIDIファイルからコード進行を解析: {args.midi}")
+    else:
+        print(f"[2/5] テキストからコード進行をパース: {args.chords}")
+
+    chords, key, scale = ENGINE.resolve_chords(args, params, use_llm, generate_chords)
+    print(f"       コード: {' | '.join(chords)}")
+    print(f"       キー: {key} / スケール: {scale}")
 
     if not chords:
         print("[ERROR] コード進行を取得できませんでした。")
@@ -307,6 +285,7 @@ def run(args):
         "params": params,
         "chords_generated": args.generate_chords,
         "part_files": result["written"],
+        "merged_file": result["merged_path"],
     }
     state_path = os.path.join(out_dir, "session.json")
     _save_session(state_path, state)
@@ -319,9 +298,12 @@ def main():
     parser = argparse.ArgumentParser(description="MIDI Sketchpad - コード進行からジャンル伴奏MIDIを生成")
     parser.add_argument("--chords", type=str, default="Dm | Bb | F | C | Dm | Bb | C | Dm", help="コード進行テキスト")
     parser.add_argument("--midi", type=str, default=None, help="コード進行を含むMIDIファイルパス")
-    parser.add_argument("--prompt", type=str,
-                        default="アニメ風アイリッシュ。冒険感があって少し切ない。フィドルとホイッスル、アコギ、バウロン。",
-                        help="スタイル・雰囲気の自然言語プロンプト")
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        default="アニメ風アイリッシュ。冒険感があって少し切ない。フィドルとホイッスル、アコギ、バウロン。",
+        help="スタイル・雰囲気の自然言語プロンプト",
+    )
     parser.add_argument("--bars", type=int, default=8, help="生成するバー数")
     parser.add_argument("--seed", type=int, default=None, help="乱数シード")
     parser.add_argument("--output", type=str, default=None, help="出力ディレクトリ")
