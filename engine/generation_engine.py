@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Tuple
 from chord_parser import parse_midi_to_chords, chords_from_text, estimate_key_and_scale
 from style_planner import plan_style
 from humanizer import apply_humanize
-from engine.event_safety import clip_events_to_song_bounds, compute_total_ticks
+from engine.event_safety import clip_events_to_song_bounds
 
 from generators.drums import DrumsGenerator, PercussionGenerator
 from generators.bass import BassGenerator
@@ -112,15 +112,19 @@ class GenerationEngine:
             normalized = {p.lower() for p in selected_parts}
             gens = {name: gen for name, gen in gens.items() if name.lower() in normalized}
 
-        total_ticks = compute_total_ticks(ticks_per_beat, time_sig, bars)
-
         all_events = {}
         for part_name, gen in gens.items():
             events = gen.generate()
             if params.get("post_humanize", False):
                 events = apply_humanize(events, params, seed=seed)
-            events = clip_events_to_song_bounds(events, total_ticks)
             all_events[part_name] = events
+
+        all_events = clip_events_to_song_bounds(
+            all_events,
+            bars=bars,
+            ticks_per_beat=ticks_per_beat,
+            time_sig=time_sig,
+        )
 
         return {
             "bpm": bpm,
