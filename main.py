@@ -17,7 +17,10 @@ from midi_renderer import (
 from engine.generation_engine import GenerationEngine
 from engine.variation_profiles import apply_variation_profile
 from engine.session_utils import resolve_part_file_map
-from engine.arrangement_plan import summarize_arrangement_plan
+from engine.arrangement_plan import (
+    summarize_arrangement_plan,
+    validate_arrangement_plan_summary,
+)
 
 
 ENGINE = GenerationEngine()
@@ -154,9 +157,23 @@ def _run_regenerate(args):
     out_dir = args.output or os.path.dirname(os.path.abspath(args.session)) or OUTPUT_DIR
     seed = args.seed if args.seed is not None else random.randint(0, 99999)
 
+    plan_validation = validate_arrangement_plan_summary(
+        state.get("arrangement_plan", {}),
+        params=params,
+        chords=chords,
+        bars=bars,
+        seed=int(state.get("seed", seed)),
+    )
+
     print("\n=== MIDI Sketchpad: Regenerate Mode ===\n")
     print(f"[1/4] session読み込み: {args.session}")
     print(f"       対象パート: {requested}")
+    if not plan_validation["ok"]:
+        print(
+            "       [WARN] arrangement_plan summary mismatch: "
+            f"{plan_validation['reason']} "
+            f"(expected={plan_validation['expected_signature']}, actual={plan_validation['actual_signature']})"
+        )
 
     # 既存パートの場所を解決
     existing_part_map = resolve_part_file_map(state.get("part_files", []), args.session)
