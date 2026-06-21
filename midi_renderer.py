@@ -168,3 +168,75 @@ def _name_to_channel(name: str) -> int:
         if n.lower() == name.lower():
             return ch
     return 0
+
+
+def _extract_performance_track(src_mid: MidiFile) -> MidiTrack | None:
+    """Source MIDIから演奏トラックを1本抽出。"""
+    if not src_mid.tracks:
+        return None
+
+    best_track = None
+    best_count = -1
+    for tr in src_mid.tracks:
+        count = sum(1 for msg in tr if getattr(msg, "type", "") in ("note_on", "note_off"))
+        if count > best_count:
+            best_count = count
+            best_track = tr
+
+    if best_track is None or best_count <= 0:
+        return None
+    return best_track
+
+
+def export_merged_from_part_midis(
+    part_midi_paths: Dict[str, str],
+    output_path: str,
+    bpm: float = 120.0,
+    ticks_per_beat: int = 480,
+    time_sig: tuple = (6, 8),
+) -> str:
+    """
+    既存パートMIDIを直接読み込み、全パート統合MIDIを構築する。
+    Regenerate時の「既存 + 再生成」完全merge用。
+    """
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    tempo = int(60_000_000 / bpm)
+
+    mid = MidiFile(type=1, ticks_per_beat=ticks_per_beat)
+
+    tempo_track = MidiTrack()
+    tempo_track.append(MetaMessage("track_name", name="Tempo", time=0))
+    tempo_track.append(MetaMessage("set_tempo", tempo=tempo, time=0))
+    tempo_track.append(MetaMessage(
+        "time_signature",
+        numerator=time_sig[0], denominator=time_sig[1],
+        clocks_per_click=24, notated_32nd_notes_per_beat=8,
+        time=0,
+    ))
+    tempo_track.append(MetaMessage("end_of_track", time=1))
+    mid.tracks.append(tempo_track)
+
+    for part_name in sorted(part_midi_paths.keys()):
+        src_path = part_midi_paths[part_name]
+        if not os.path.exists(src_path):
+            continue
+
+        src_mid = mido.MidiFile(src_path)
+        src_track = _extract_performance_track(src_mid)
+        if src_track is None:
+            continue
+
+        new_track = MidiTrack()
+        new_track.append(MetaMessage("track_name", name=part_name, time=0))
+        for msg in src_track:
+            if msg.type in ("set_tempo", "time_signature", "track_name"):
+                continue
+            new_track.append(msg.copy())
+        if not new_track or new_track[-1].type != "end_of_track":
+            new_track.append(MetaMessage("end_of_track", time=1))
+
+        mid.tracks.append(new_track)
+
+    mid.save(output_path)
+    print(f"  [OK] Merged(rebuilt):{output_path}")
+    return output_path
