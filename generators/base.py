@@ -3,7 +3,9 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Any
 import random
 
-MidiEvent = Tuple[int, int, int, int, int]
+from model.events import MidiEventLike
+
+MidiEvent = MidiEventLike
 
 
 class BaseGenerator(ABC):

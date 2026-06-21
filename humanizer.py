@@ -7,6 +7,7 @@
 from typing import List, Dict, Any
 import random
 from generators.base import MidiEvent
+from model.events import event_to_tuple, event_with_values
 
 
 def apply_humanize(
@@ -27,11 +28,13 @@ def apply_humanize(
     tpb    = 480  # デフォルト
 
     result = []
-    for (tick, ch, note, vel, dur) in events:
+    for event in events:
+        tick, ch, note, vel, dur = event_to_tuple(event)
+
         # ドラム（ch9）はtimingを動かさない
         if ch == 9:
             new_vel  = _micro_vel(vel, amount, rng)
-            result.append((tick, ch, note, new_vel, dur))
+            result.append(event_with_values(event, tick, ch, note, new_vel, dur))
             continue
 
         new_tick = _timing_jitter(tick, amount, tpb, rng)
@@ -44,7 +47,7 @@ def apply_humanize(
             if eighth <= beat_pos < eighth * 2:
                 new_tick += int(eighth * swing * 0.33)
 
-        result.append((max(0, new_tick), ch, note, new_vel, dur))
+        result.append(event_with_values(event, max(0, new_tick), ch, note, new_vel, dur))
 
     return result
 

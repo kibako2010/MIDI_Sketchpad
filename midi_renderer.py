@@ -10,6 +10,7 @@ import mido
 from mido import MidiFile, MidiTrack, Message, MetaMessage
 
 from generators.base import MidiEvent
+from model.events import event_to_tuple
 
 # MIDIチャンネル → パート名マッピング
 CHANNEL_NAMES = {
@@ -46,7 +47,8 @@ def _events_to_track(
 
     # Note ON/OFF イベントに展開
     raw: List[tuple] = []
-    for (abs_tick, ch, note, vel, dur) in events:
+    for event in events:
+        abs_tick, ch, note, vel, dur = event_to_tuple(event)
         raw.append((abs_tick,       "note_on",  ch, note, vel))
         raw.append((abs_tick + dur, "note_off", ch, note, 0))
 
