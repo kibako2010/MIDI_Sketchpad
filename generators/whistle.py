@@ -99,8 +99,9 @@ class WhistleGenerator(BaseGenerator):
                 dur = et - 15
 
             if self.weirdness_v > 0.6 and self.rng.random() < 0.12:
-                note = min(hi, note + 1)
+                note = note + 1
 
+            note = self._nearest_scale_note(note, scale_notes, lo=lo, hi=hi)
             events.append((self._humanize_timing(tick), CH_WHISTLE, note, vel, dur))
 
         return events

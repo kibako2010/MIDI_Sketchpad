@@ -83,6 +83,20 @@ class BaseGenerator(ABC):
             idx = 0
         return idx
 
+    def _nearest_scale_note(self, note: int, scale_notes: List[int], lo: int | None = None, hi: int | None = None) -> int:
+        if lo is not None:
+            note = max(lo, note)
+        if hi is not None:
+            note = min(hi, note)
+        if not scale_notes:
+            return note
+
+        candidates = [n for n in scale_notes if (lo is None or n >= lo) and (hi is None or n <= hi)]
+        if not candidates:
+            candidates = scale_notes
+
+        return min(candidates, key=lambda n: (abs(n - note), n))
+
     def _humanize_velocity(self, vel: int, amount: float = None) -> int:
         if amount is None:
             amount = self.humanize_v

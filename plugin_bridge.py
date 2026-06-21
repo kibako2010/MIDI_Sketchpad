@@ -20,6 +20,7 @@ from typing import Any, Dict, List
 from chord_generator import generate_chords
 from chord_parser import chords_from_text, estimate_key_and_scale, parse_midi_to_chords
 from engine.arrangement_plan import summarize_arrangement_plan
+from engine.event_safety import clip_events_to_song_bounds, compute_total_ticks
 from engine.generation_engine import GenerationEngine
 from humanizer import apply_humanize
 from midi_renderer import export_merged_file, export_part_files
@@ -165,6 +166,17 @@ def _list_to_part_map(file_paths: List[str]) -> Dict[str, str]:
     return result
 
 
+def _resolve_key_scale(req: Dict[str, Any], chords: List[str]) -> tuple[str, str]:
+    estimated_key, estimated_scale = estimate_key_and_scale(chords)
+
+    key_override = req.get("key")
+    scale_override = req.get("scale")
+
+    key = str(key_override).strip() if key_override is not None and str(key_override).strip() else estimated_key
+    scale = str(scale_override).strip() if scale_override is not None and str(scale_override).strip() else estimated_scale
+    return key, scale
+
+
 def _handle_generate(req: Dict[str, Any]) -> Dict[str, Any]:
     chords_text = str(req.get("chords", ""))
     chords = chords_from_text(chords_text)
@@ -195,7 +207,7 @@ def _handle_generate(req: Dict[str, Any]) -> Dict[str, Any]:
     params["parts"]["piano"] = False
     params["parts"]["lead_synth"] = False
 
-    key, scale = estimate_key_and_scale(chords)
+    key, scale = _resolve_key_scale(req, chords)
 
     generators = ENGINE.build_generators(
         chords=chords,
@@ -208,11 +220,14 @@ def _handle_generate(req: Dict[str, Any]) -> Dict[str, Any]:
         seed=seed,
     )
 
+    total_ticks = compute_total_ticks(480, time_sig_tuple, bars)
+
     all_events: Dict[str, List[tuple]] = {}
     for part_name, gen in generators.items():
         events = gen.generate()
         if params.get("post_humanize", False):
             events = apply_humanize(events, params, seed=seed)
+        events = clip_events_to_song_bounds(events, total_ticks)
         all_events[part_name] = events
 
     enabled_parts = _enabled_rendered_parts(tracks)
