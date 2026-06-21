@@ -48,8 +48,6 @@ class BaseGenerator(ABC):
         self.anime_v    = params.get("anime",      80) / 100.0
         self.folk_v     = params.get("folk",       80) / 100.0
         self.rock_v     = params.get("rock",       20) / 100.0
-        self.orchestral_v = params.get("orchestral", 45) / 100.0
-        self.weirdness_v  = params.get("weirdness",  10) / 100.0
 
     # ------------------------------------------------------------------
     # ユーティリティ

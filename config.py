@@ -1,9 +1,8 @@
 # config.py
 from dataclasses import dataclass, field
 from typing import Dict, Any
-import os
 
-# ---- 音名定義 ----
+# ---- 音名定義 ----  ← ここに追加
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F",
               "F#", "G", "G#", "A", "A#", "B"]
 
@@ -26,8 +25,6 @@ RANGE = {
     "fiddle":     (55, 93),   # G3 - A6
     "whistle":    (74, 98),   # D5 - D7
     "pad":        (48, 84),   # C3 - C6
-    "piano":      (48, 84),   # C3 - C6
-    "lead":       (60, 96),   # C4 - C7
     "drums":      (35, 81),
     "percussion": (35, 81),
 }
@@ -80,16 +77,9 @@ CHORD_INTERVALS = {
 }
 
 # ---- LM Studio設定 ----
-# 優先: 環境変数 > デフォルト(localhost)
-LM_STUDIO_API_URL = os.getenv(
-    "LM_STUDIO_API_URL",
-    "http://localhost:1234/v1/chat/completions",
-)
-LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "local-model")
-
-# ---- 互換エイリアス（既存コード向け） ----
-OLLAMA_URL = LM_STUDIO_API_URL
-OLLAMA_MODEL = LM_STUDIO_MODEL
+LM_STUDIO_URL = "http://192.168.0.149:1234/v1/chat/completions"
+OLLAMA_URL    = LM_STUDIO_URL   # 既存コードとの互換性のため
+OLLAMA_MODEL  = "local-model"   # LM Studioは名前不要（ロード中のモデルが使われる）
 
 # ---- デフォルト出力ディレクトリ ----
 OUTPUT_DIR = "./output"

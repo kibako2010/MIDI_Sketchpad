@@ -1,7 +1,7 @@
 # prompt_interpreter.py
 """
 自然言語プロンプト → 内部JSONパラメータ変換。
-LLMモード: LM Studio(OpenAI互換)に投げて詳細なパラメータを生成。
+LLMモード: Ollamaに投げて詳細なパラメータを生成。
 フォールバック: キーワードマッチング。
 """
 
@@ -9,7 +9,7 @@ import json
 import re
 import requests
 from typing import Dict, Any
-from config import LM_STUDIO_API_URL, LM_STUDIO_MODEL
+from config import OLLAMA_URL, OLLAMA_MODEL
 
 
 SYSTEM_PROMPT = """\
@@ -28,7 +28,6 @@ Given a natural language description, output ONLY valid JSON with exactly these 
   "rock": int 0-100,
   "orchestral": int 0-100,
   "humanize": int 0-100,
-  "post_humanize": bool,
   "swing": int 0-100,
   "weirdness": int 0-100,
   "parts": {
@@ -56,6 +55,12 @@ Style values: anime_irish, city_pop, celtic_rock, jazz_ballad, synthwave,
               trap, uk_garage, bossa_nova, funk, ambient, drum_n_bass
 Tempo feel values: fast_6_8, medium_6_8, slow_6_8,
                    fast_4_4, medium_4_4, slow_4_4, fast_12_8
+
+For anime_irish style:
+- Set folk: 70-90, anime: 70-90
+- tempo_feel: fast_6_8 or medium_6_8
+- drums/percussion/bass/acoustic_guitar/fiddle/tin_whistle/pad_strings: true
+- generation_notes should describe Irish jig characteristics
 
 Output ONLY the JSON. No explanation, no markdown."""
 
@@ -128,15 +133,22 @@ EXCLUDE_KEYWORDS = {
 
 
 def _get_default_parts(style: str) -> dict:
-    return dict(STYLE_DEFAULT_PARTS.get(style, STYLE_DEFAULT_PARTS["anime_irish"]))
+    return dict(STYLE_DEFAULT_PARTS.get(
+        style, STYLE_DEFAULT_PARTS["anime_irish"]
+    ))
 
 
-def _validate_and_fill(params: Dict[str, Any], prompt: str) -> Dict[str, Any]:
+def _validate_and_fill(params: Dict[str, Any],
+                        prompt: str) -> Dict[str, Any]:
+    """
+    LLMの出力に抜け・型エラーがあれば補完する。
+    """
     style = params.get("style", "anime_irish")
 
+    # 数値パラメータのデフォルト
     int_fields = {
         "energy": 70, "density": 60, "complexity": 60,
-        "anime": 70, "folk": 70, "rock": 20,
+        "anime": 70,  "folk": 70,    "rock": 20,
         "orchestral": 45, "humanize": 70, "swing": 20, "weirdness": 10,
     }
     for field, default in int_fields.items():
@@ -146,33 +158,38 @@ def _validate_and_fill(params: Dict[str, Any], prompt: str) -> Dict[str, Any]:
         except (TypeError, ValueError):
             params[field] = default
 
-    if "post_humanize" not in params:
-        params["post_humanize"] = False
-    else:
-        params["post_humanize"] = bool(params["post_humanize"])
-
+    # mood
     if not isinstance(params.get("mood"), list) or not params["mood"]:
         params["mood"] = ["adventurous"]
 
+    # tempo_feel
     if not params.get("tempo_feel"):
-        params["tempo_feel"] = "fast_6_8" if ("irish" in style or "celtic" in style) else "medium_4_4"
+        if "irish" in style or "celtic" in style:
+            params["tempo_feel"] = "fast_6_8"
+        else:
+            params["tempo_feel"] = "medium_4_4"
 
+    # parts: 抜けているキーをデフォルトで補完
     default_parts = _get_default_parts(style)
     parts = params.get("parts", {})
     if not isinstance(parts, dict):
         parts = {}
     for key, default_val in default_parts.items():
-        parts[key] = bool(parts.get(key, default_val))
+        if key not in parts:
+            parts[key] = default_val
+        else:
+            parts[key] = bool(parts[key])
     params["parts"] = parts
 
+    # generation_notes
     if not isinstance(params.get("generation_notes"), dict):
         params["generation_notes"] = {
-            "fiddle": "jig-like motif with ornamentation",
+            "fiddle":      "jig-like motif with ornamentation",
             "tin_whistle": "call and response countermelody",
-            "guitar": "driving acoustic strum",
-            "percussion": "bodhran-like pulse",
-            "bass": "root-fifth with approach notes",
-            "strings": "sustained anime-style lift",
+            "guitar":      "driving acoustic strum",
+            "percussion":  "bodhran-like pulse",
+            "bass":        "root-fifth with approach notes",
+            "strings":     "sustained anime-style lift",
         }
 
     return params
@@ -187,7 +204,8 @@ def _keyword_fallback(prompt: str) -> Dict[str, Any]:
             style = s
             break
 
-    moods = [m for m, kws in KEYWORD_MOODS.items() if any(kw in prompt_lower for kw in kws)]
+    moods = [m for m, kws in KEYWORD_MOODS.items()
+             if any(kw in prompt_lower for kw in kws)]
     if not moods:
         moods = ["adventurous"]
 
@@ -198,7 +216,9 @@ def _keyword_fallback(prompt: str) -> Dict[str, Any]:
     else:
         energy = 70
 
-    tempo_feel = "fast_6_8" if ("irish" in style or "celtic" in style or "anime_irish" in style) else "medium_4_4"
+    tempo_feel = ("fast_6_8"
+                  if "irish" in style or "celtic" in style or "anime_irish" in style
+                  else "medium_4_4")
 
     parts = _get_default_parts(style)
     for part, keywords in PART_KEYWORDS.items():
@@ -208,91 +228,57 @@ def _keyword_fallback(prompt: str) -> Dict[str, Any]:
         if any(kw in prompt_lower for kw in keywords):
             parts[part] = False
     parts["drums"] = True
-    parts["bass"] = True
+    parts["bass"]  = True
 
     anime_score = 80 if ("anime" in style or "アニメ" in prompt_lower) else 40
-    folk_score = 80 if ("irish" in style or "アイリッシュ" in prompt_lower) else 30
-    rock_score = 70 if "rock" in style else 20
+    folk_score  = 80 if ("irish" in style or "アイリッシュ" in prompt_lower) else 30
+    rock_score  = 70 if "rock" in style else 20
 
     return {
-        "style": style,
-        "mood": moods,
+        "style":      style,
+        "mood":       moods,
         "tempo_feel": tempo_feel,
-        "energy": energy,
-        "density": int(energy * 0.85),
+        "energy":     energy,
+        "density":    int(energy * 0.85),
         "complexity": 60,
-        "anime": anime_score,
-        "folk": folk_score,
-        "rock": rock_score,
+        "anime":      anime_score,
+        "folk":       folk_score,
+        "rock":       rock_score,
         "orchestral": 45,
-        "humanize": 70,
-        "post_humanize": False,
-        "swing": 20,
-        "weirdness": 10,
-        "parts": parts,
+        "humanize":   70,
+        "swing":      20,
+        "weirdness":  10,
+        "parts":      parts,
         "generation_notes": {
-            "fiddle": "jig-like motif with ornamentation",
+            "fiddle":      "jig-like motif with ornamentation",
             "tin_whistle": "call and response countermelody",
-            "guitar": "driving acoustic strum",
-            "percussion": "bodhran-like pulse",
-            "bass": "root-fifth with approach notes",
-            "strings": "sustained anime-style lift",
+            "guitar":      "driving acoustic strum",
+            "percussion":  "bodhran-like pulse",
+            "bass":        "root-fifth with approach notes",
+            "strings":     "sustained anime-style lift",
         },
     }
 
-
-def _extract_json(raw: str) -> Dict[str, Any]:
-    match = re.search(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
-    if not match:
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-
-    if not match:
-        raise ValueError("LLM response has no JSON object")
-
-    json_str = match.group(1) if match.lastindex else match.group()
-    return json.loads(json_str)
-
-
-def call_lm_studio_chat(user_prompt: str, system_prompt: str = SYSTEM_PROMPT, timeout: int = 60) -> str:
+def _call_lm_studio(prompt: str) -> str:
+    """LM Studio / OpenAI互換APIを呼び出す"""
     payload = {
-        "model": LM_STUDIO_MODEL,
+        "model":    OLLAMA_MODEL,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
+            {"role": "system",  "content": SYSTEM_PROMPT},
+            {"role": "user",    "content": prompt},
         ],
         "temperature": 0.7,
-        "max_tokens": 1024,
-        "stream": False,
+        "max_tokens":  1024,
+        "stream":      False,
     }
     resp = requests.post(
-        LM_STUDIO_API_URL,
+        OLLAMA_URL,
         json=payload,
-        timeout=timeout,
+        timeout=60,
         headers={"Content-Type": "application/json"},
     )
     resp.raise_for_status()
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
-
-
-def test_lm_studio_connection(timeout: int = 8) -> Dict[str, Any]:
-    """LM Studio接続テスト用。main.py --test-llm で利用。"""
-    try:
-        reply = call_lm_studio_chat(
-            "Return JSON only: {\"ok\":true,\"service\":\"lm_studio\"}",
-            system_prompt="Return ONLY valid compact JSON.",
-            timeout=timeout,
-        )
-        payload = _extract_json(reply)
-        return {"ok": bool(payload.get("ok", True)), "response": payload}
-    except Exception as e:
-        return {
-            "ok": False,
-            "error": (
-                f"LM Studio接続失敗: {e}. "
-                f"LM Studioが起動中か、API URL({LM_STUDIO_API_URL})が正しいか確認してください。"
-            ),
-        }
+    return resp.json()["choices"][0]["message"]["content"]
 
 
 def interpret_prompt(prompt: str, use_llm: bool = True) -> Dict[str, Any]:
@@ -300,14 +286,23 @@ def interpret_prompt(prompt: str, use_llm: bool = True) -> Dict[str, Any]:
         return _keyword_fallback(prompt)
 
     try:
-        raw = call_lm_studio_chat(prompt)
-        params = _extract_json(raw)
-        params = _validate_and_fill(params, prompt)
-        print("       [LLM] プロンプト解釈成功")
-        return params
+        raw   = _call_lm_studio(prompt)
+
+        # JSONブロックを抽出
+        match = re.search(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
+        if not match:
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+
+        if match:
+            json_str = match.group(1) if match.lastindex else match.group()
+            params   = json.loads(json_str)
+            params   = _validate_and_fill(params, prompt)
+            print("       [LLM] プロンプト解釈成功")
+            return params
+
+        print("[WARN] LLM response has no JSON. Using fallback.")
+        return _keyword_fallback(prompt)
+
     except Exception as e:
-        print(
-            f"[WARN] LLM call failed ({e}). "
-            f"LM Studio URL={LM_STUDIO_API_URL}. Using keyword fallback."
-        )
+        print(f"[WARN] LLM call failed ({e}). Using keyword fallback.")
         return _keyword_fallback(prompt)

@@ -1,17 +1,18 @@
 # chord_generator.py
 """
 コード進行生成モジュール。
-LLMが使える場合はLM Studio(OpenAI互換)に生成させる。
+LLMが使える場合はOllamaに生成させる。
 使えない場合はスタイル別テンプレートから選ぶ。
 """
 
 import json
 import re
 import requests
-from typing import Dict, Any
-from config import LM_STUDIO_API_URL, LM_STUDIO_MODEL
+from typing import List, Dict, Any
+from config import OLLAMA_URL, OLLAMA_MODEL
 
 
+# ---- スタイル別コード進行テンプレート ----
 CHORD_TEMPLATES = {
     "anime_irish": [
         ["Dm", "Bb", "F",  "C"],
@@ -26,14 +27,14 @@ CHORD_TEMPLATES = {
     "city_pop": [
         ["Cmaj7", "Am7",  "Dm7",  "G7"],
         ["Fmaj7", "Em7",  "Am7",  "Dm7"],
-        ["Cmaj7", "Fmaj7", "Em7", "Am7"],
+        ["Cmaj7", "Fmaj7","Em7",  "Am7"],
         ["Amaj7", "F#m7", "Bm7",  "E7"],
     ],
     "jazz_ballad": [
         ["Cmaj7", "Am7",  "Dm7",  "G7"],
-        ["Fmaj7", "Bb7",  "Cmaj7", "A7"],
-        ["Dm7",   "G7",   "Cmaj7", "A7"],
-        ["Am7",   "D7",   "Gmaj7", "E7"],
+        ["Fmaj7", "Bb7",  "Cmaj7","A7"],
+        ["Dm7",   "G7",   "Cmaj7","A7"],
+        ["Am7",   "D7",   "Gmaj7","E7"],
     ],
     "celtic_rock": [
         ["Am", "G",  "F",  "G"],
@@ -77,85 +78,105 @@ Additional notes: {notes}
 Output ONLY the JSON object."""
 
 
-def generate_chords_llm(params: Dict[str, Any], bars: int) -> Dict[str, Any] | None:
+def generate_chords_llm(
+    params: Dict[str, Any],
+    bars:   int,
+) -> Dict[str, Any]:
+    from config import OLLAMA_URL, OLLAMA_MODEL
+
     prompt = CHORD_GEN_PROMPT.format(
-        style=params.get("style", "anime_irish"),
-        mood=", ".join(params.get("mood", ["adventurous"])),
-        energy=params.get("energy", 70),
-        bars=bars,
-        notes=params.get("generation_notes", {}).get("bass", ""),
+        style  = params.get("style",  "anime_irish"),
+        mood   = ", ".join(params.get("mood", ["adventurous"])),
+        energy = params.get("energy", 70),
+        bars   = bars,
+        notes  = params.get("generation_notes", {}).get("bass", ""),
     )
 
     payload = {
-        "model": LM_STUDIO_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
+        "model":    OLLAMA_MODEL,
+        "messages": [
+            {"role": "user", "content": prompt},
+        ],
         "temperature": 0.8,
-        "max_tokens": 512,
-        "stream": False,
+        "max_tokens":  512,
+        "stream":      False,
     }
-
     try:
         resp = requests.post(
-            LM_STUDIO_API_URL,
+            OLLAMA_URL,
             json=payload,
             timeout=60,
             headers={"Content-Type": "application/json"},
         )
         resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"]
+        raw   = resp.json()["choices"][0]["message"]["content"]
         match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not match:
-            return None
-
-        result = json.loads(match.group())
-        chords = result.get("chords", [])
-        if not chords:
-            return None
-
-        while len(chords) < bars:
-            chords.extend(chords)
-        chords = chords[:bars]
-
-        return {
-            "chords": chords,
-            "key": result.get("key", "D"),
-            "scale": result.get("scale", "dorian"),
-        }
+        if match:
+            result = json.loads(match.group())
+            chords = result.get("chords", [])
+            if len(chords) < bars:
+                while len(chords) < bars:
+                    chords.extend(chords)
+                chords = chords[:bars]
+            elif len(chords) > bars:
+                chords = chords[:bars]
+            return {
+                "chords": chords,
+                "key":    result.get("key",   "D"),
+                "scale":  result.get("scale", "dorian"),
+            }
     except Exception as e:
-        print(
-            f"[WARN] LLM chord generation failed ({e}). "
-            f"LM Studio URL={LM_STUDIO_API_URL}. Using template."
-        )
-        return None
+        print(f"[WARN] LLM chord generation failed ({e}). Using template.")
+
+    return None
 
 
-def generate_chords_template(params: Dict[str, Any], bars: int, seed: int = 42) -> Dict[str, Any]:
+def generate_chords_template(
+    params: Dict[str, Any],
+    bars:   int,
+    seed:   int = 42,
+) -> Dict[str, Any]:
+    """
+    テンプレートからコード進行を選んで返す。
+    barsに合わせてループ展開する。
+    """
     import random
-    rng = random.Random(seed)
-    style = params.get("style", "anime_irish")
-    pool = CHORD_TEMPLATES.get(style, CHORD_TEMPLATES["anime_irish"])
-    base = rng.choice(pool)
+    rng    = random.Random(seed)
+    style  = params.get("style", "anime_irish")
+    pool   = CHORD_TEMPLATES.get(style, CHORD_TEMPLATES["anime_irish"])
+    base   = rng.choice(pool)
 
+    # barsに合わせてループ展開
     chords = []
     while len(chords) < bars:
         chords.extend(base)
     chords = chords[:bars]
 
+    # キーとスケールをテンプレートから推定
     from chord_parser import estimate_key_and_scale
     key, scale = estimate_key_and_scale(chords)
 
+    # anime_irishはdorianを優先
     if "irish" in style or "celtic" in style:
         scale = "dorian"
 
-    return {"chords": chords, "key": key, "scale": scale}
+    return {
+        "chords": chords,
+        "key":    key,
+        "scale":  scale,
+    }
 
 
 def generate_chords(
-    params: Dict[str, Any],
-    bars: int,
-    seed: int = 42,
+    params:  Dict[str, Any],
+    bars:    int,
+    seed:    int  = 42,
     use_llm: bool = True,
 ) -> Dict[str, Any]:
+    """
+    コード進行を生成するメインエントリ。
+    LLM → テンプレートフォールバックの順で試みる。
+    """
     if use_llm:
         result = generate_chords_llm(params, bars)
         if result:
