@@ -141,8 +141,6 @@ def chords_from_text(text: str) -> List[str]:
             continue
 
         if token == "^":
-            if chords:
-                chords.append(chords[-1])
             continue
 
         if parse_chord_name(token) is None:

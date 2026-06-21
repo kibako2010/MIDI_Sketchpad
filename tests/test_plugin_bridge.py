@@ -196,7 +196,7 @@ def test_plugin_bridge_generate_ignores_caret_tokens_in_session_chords(tmp_path)
 
     session = json.loads(Path(response["session"]).read_text(encoding="utf-8"))
     assert "^" not in session["chords"]
-    assert session["chords"] == ["Am", "Am", "F", "F", "C", "C", "G"]
+    assert session["chords"] == ["Am", "F", "C", "G"]
 
 
 def test_plugin_bridge_import_midi_chords(tmp_path):
