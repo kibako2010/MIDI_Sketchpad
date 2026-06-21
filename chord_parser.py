@@ -133,7 +133,22 @@ def parse_midi_to_chords(midi_path: str, bars: int = 8) -> List[str]:
 
 def chords_from_text(text: str) -> List[str]:
     tokens = re.split(r"[\|\s,\n]+", text.strip())
-    return [t.strip() for t in tokens if t.strip() and t.strip() != "|"]
+    chords: List[str] = []
+
+    for raw in tokens:
+        token = raw.strip()
+        if not token or token == "|":
+            continue
+
+        if token == "^":
+            continue
+
+        if parse_chord_name(token) is None:
+            continue
+
+        chords.append(token)
+
+    return chords
 
 
 def _note_name_to_pc(name: str) -> int:
