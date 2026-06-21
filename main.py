@@ -17,6 +17,7 @@ from midi_renderer import (
 from engine.generation_engine import GenerationEngine
 from engine.variation_profiles import apply_variation_profile
 from engine.session_utils import resolve_part_file_map
+from engine.arrangement_plan import summarize_arrangement_plan
 
 
 ENGINE = GenerationEngine()
@@ -121,6 +122,7 @@ def _run_variations(args, params, chords, key, scale):
             "seed": var_seed,
             "bars": args.bars,
             "params": var_params,
+            "arrangement_plan": summarize_arrangement_plan(var_params, chords, args.bars, var_seed),
             "part_files": result["written"],
             "merged_file": result["merged_path"],
         }
@@ -202,10 +204,14 @@ def _run_regenerate(args):
         "source_session": args.session,
         "regenerated_parts": requested,
         "seed": seed,
+        "chords": chords,
+        "bars": bars,
+        "params": params,
         "key": result["key"],
         "scale": result["scale"],
         "bpm": result["bpm"],
         "time_sig": result["time_sig"],
+        "arrangement_plan": summarize_arrangement_plan(params, chords, bars, seed),
         "part_files": list(final_part_map.values()),
         "merged_file": merged_path,
     }
@@ -283,6 +289,7 @@ def run(args):
         "seed": seed,
         "bars": args.bars,
         "params": params,
+        "arrangement_plan": summarize_arrangement_plan(params, chords, args.bars, seed),
         "chords_generated": args.generate_chords,
         "part_files": result["written"],
         "merged_file": result["merged_path"],
