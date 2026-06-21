@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from chord_generator import generate_chords
-from chord_parser import chords_from_text, estimate_key_and_scale, parse_midi_to_chords
+from chord_parser import chords_from_text, estimate_key_and_scale, parse_chord_name, parse_midi_to_chords
 from engine.arrangement_plan import summarize_arrangement_plan
 from engine.event_safety import clip_events_to_song_bounds
 from engine.generation_engine import GenerationEngine
@@ -166,15 +166,60 @@ def _list_to_part_map(file_paths: List[str]) -> Dict[str, str]:
     return result
 
 
+def _note_name_to_pc(name: str) -> int | None:
+    note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    clean = name.replace("b", "").replace("#", "")
+    if clean not in note_names:
+        return None
+
+    pc = note_names.index(clean)
+    if "b" in name:
+        pc = (pc - 1) % 12
+    elif "#" in name:
+        pc = (pc + 1) % 12
+    return pc
+
+
+def _is_minor_tonic_start(chords: List[str], key_name: str) -> bool:
+    if not chords:
+        return False
+
+    parsed = parse_chord_name(chords[0])
+    if not parsed:
+        return False
+
+    root_name, chord_type = parsed
+    is_minor_quality = ("min" in chord_type and "maj" not in chord_type)
+    if not is_minor_quality:
+        return False
+
+    key_pc = _note_name_to_pc(key_name)
+    root_pc = _note_name_to_pc(root_name)
+    if key_pc is None or root_pc is None:
+        return False
+
+    return key_pc == root_pc
+
+
 def _resolve_key_scale(req: Dict[str, Any], chords: List[str]) -> tuple[str, str]:
     estimated_key, estimated_scale = estimate_key_and_scale(chords)
 
-    key_override = req.get("key")
-    scale_override = req.get("scale")
+    key_override = str(req.get("key", "")).strip()
+    scale_override = str(req.get("scale", "")).strip()
 
-    key = str(key_override).strip() if key_override is not None and str(key_override).strip() else estimated_key
-    scale = str(scale_override).strip() if scale_override is not None and str(scale_override).strip() else estimated_scale
-    return key, scale
+    if key_override and scale_override:
+        return key_override, scale_override
+
+    if key_override:
+        resolved_scale = estimated_scale
+        if not scale_override and estimated_scale == "major" and _is_minor_tonic_start(chords, key_override):
+            resolved_scale = "natural_minor"
+        return key_override, resolved_scale
+
+    if scale_override:
+        return estimated_key, scale_override
+
+    return estimated_key, estimated_scale
 
 
 def _handle_generate(req: Dict[str, Any]) -> Dict[str, Any]:

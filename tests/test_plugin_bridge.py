@@ -167,8 +167,36 @@ def test_plugin_bridge_generate_respects_key_scale_override(tmp_path):
     assert response["scale"] == "natural_minor"
 
     session = json.loads(Path(response["session"]).read_text(encoding="utf-8"))
+    assert session["chords"] == ["Am", "F", "C", "G"]
     assert session["key"] == "A"
     assert session["scale"] == "natural_minor"
+
+
+def test_plugin_bridge_generate_ignores_caret_tokens_in_session_chords(tmp_path):
+    out_dir = tmp_path / "out_caret"
+    request = {
+        "version": 1,
+        "command": "generate",
+        "chords": "Am ^| F ^| C ^| G",
+        "prompt": "anime irish",
+        "bars": 4,
+        "bpm": 120,
+        "time_sig": [6, 8],
+        "seed": 222,
+        "humanize": 60,
+        "output_dir": str(out_dir),
+        "create_timestamp_folder": False,
+        "merge": False,
+        "use_llm": False,
+        "tracks": _all_tracks(False) | {"fiddle": {"enabled": True, "volume_db": 0.0}},
+    }
+
+    response = _run_bridge(tmp_path, request)
+    assert response["ok"] is True
+
+    session = json.loads(Path(response["session"]).read_text(encoding="utf-8"))
+    assert "^" not in session["chords"]
+    assert session["chords"] == ["Am", "Am", "F", "F", "C", "C", "G"]
 
 
 def test_plugin_bridge_import_midi_chords(tmp_path):

@@ -6,7 +6,6 @@ from generators.whistle import WhistleGenerator
 
 
 def test_clip_events_to_song_bounds_applies_all_safety_rules():
-    total_ticks = 100
     events = [
         (-10, 9, 140, 200, 20),   # start<0 + note/vel clamp
         (95, 9, 60, 90, 20),      # end overflow -> clip duration
