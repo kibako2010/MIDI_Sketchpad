@@ -21,6 +21,7 @@ from engine.arrangement_plan import (
     summarize_arrangement_plan,
     validate_arrangement_plan_summary,
     build_arrangement_plan_document,
+    load_deterministic_inputs_from_plan_file,
 )
 
 
@@ -172,6 +173,23 @@ def _run_regenerate(args):
         print("[ERROR] --regenerate の指定が空です。")
         sys.exit(1)
 
+    recovered = load_deterministic_inputs_from_plan_file(
+        state.get("arrangement_plan_file"),
+        args.session,
+    )
+
+    recovered_used = False
+    if recovered:
+        if not state.get("chords"):
+            state["chords"] = recovered["chords"]
+            recovered_used = True
+        if not state.get("params"):
+            state["params"] = recovered["params"]
+            recovered_used = True
+        if state.get("bars") in (None, ""):
+            state["bars"] = recovered["bars"]
+            recovered_used = True
+
     chords = state.get("chords", [])
     if not chords:
         print("[ERROR] session.json から chords を取得できません。")
@@ -184,17 +202,20 @@ def _run_regenerate(args):
     out_dir = args.output or os.path.dirname(os.path.abspath(args.session)) or OUTPUT_DIR
     seed = args.seed if args.seed is not None else random.randint(0, 99999)
 
+    plan_seed = int(state.get("seed", recovered["seed"] if recovered else seed))
     plan_validation = validate_arrangement_plan_summary(
         state.get("arrangement_plan", {}),
         params=params,
         chords=chords,
         bars=bars,
-        seed=int(state.get("seed", seed)),
+        seed=plan_seed,
     )
 
     print("\n=== MIDI Sketchpad: Regenerate Mode ===\n")
     print(f"[1/4] session読み込み: {args.session}")
     print(f"       対象パート: {requested}")
+    if recovered_used:
+        print("       arrangement_plan_file から deterministic inputs を補完しました")
     if not plan_validation["ok"]:
         print(
             "       [WARN] arrangement_plan summary mismatch: "

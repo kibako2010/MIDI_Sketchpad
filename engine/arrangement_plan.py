@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List
 
@@ -122,6 +123,65 @@ def build_arrangement_plan_document(
             "seed": seed,
         },
     }
+
+
+def extract_deterministic_inputs_from_document(document: Dict[str, Any]) -> Dict[str, Any] | None:
+    deterministic_inputs = document.get("deterministic_inputs")
+    if not isinstance(deterministic_inputs, dict):
+        return None
+
+    params = deterministic_inputs.get("params")
+    chords = deterministic_inputs.get("chords")
+    bars = deterministic_inputs.get("bars")
+    seed = deterministic_inputs.get("seed")
+
+    if not isinstance(params, dict) or not isinstance(chords, list):
+        return None
+
+    try:
+        bars_i = int(bars)
+        seed_i = int(seed)
+    except (TypeError, ValueError):
+        return None
+
+    return {
+        "params": params,
+        "chords": [str(ch) for ch in chords],
+        "bars": bars_i,
+        "seed": seed_i,
+    }
+
+
+def load_deterministic_inputs_from_plan_file(
+    plan_file: str | None,
+    session_path: str,
+) -> Dict[str, Any] | None:
+    if not plan_file:
+        return None
+
+    session_dir = os.path.dirname(os.path.abspath(session_path))
+    if os.path.isabs(plan_file):
+        candidates = [plan_file]
+    else:
+        candidates = [
+            os.path.join(session_dir, plan_file),
+            os.path.abspath(plan_file),
+        ]
+
+    for candidate in candidates:
+        if not os.path.exists(candidate):
+            continue
+        try:
+            with open(candidate, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        recovered = extract_deterministic_inputs_from_document(payload)
+        if recovered:
+            return recovered
+
+    return None
 
 
 def validate_arrangement_plan_summary(
