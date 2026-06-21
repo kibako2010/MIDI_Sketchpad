@@ -20,6 +20,7 @@ from engine.session_utils import resolve_part_file_map
 from engine.arrangement_plan import (
     summarize_arrangement_plan,
     validate_arrangement_plan_summary,
+    build_arrangement_plan_document,
 )
 
 
@@ -38,6 +39,22 @@ def _list_to_part_map(file_paths):
         name = os.path.splitext(os.path.basename(p))[0]
         result[name] = p
     return result
+
+
+def _maybe_export_arrangement_plan_file(args, out_dir, params, chords, bars, seed, filename="arrangement_plan.json"):
+    if not getattr(args, "save_arrangement_plan", False):
+        return None
+
+    payload = build_arrangement_plan_document(
+        params=params,
+        chords=chords,
+        bars=bars,
+        seed=seed,
+    )
+    file_path = os.path.join(out_dir, filename)
+    _save_session(file_path, payload)
+    print(f"  [OK] ArrangementPlan保存: {file_path}")
+    return file_path
 
 
 def _render_and_export(chords, key, scale, params, bars, out_dir, seed, merge=False, selected_parts=None):
@@ -113,6 +130,15 @@ def _run_variations(args, params, chords, key, scale):
             merge=args.merge,
         )
 
+        arrangement_plan_file = _maybe_export_arrangement_plan_file(
+            args,
+            out_dir=out_dir,
+            params=var_params,
+            chords=chords,
+            bars=args.bars,
+            seed=var_seed,
+        )
+
         state = {
             "mode": "variation",
             "variation": label,
@@ -126,6 +152,7 @@ def _run_variations(args, params, chords, key, scale):
             "bars": args.bars,
             "params": var_params,
             "arrangement_plan": summarize_arrangement_plan(var_params, chords, args.bars, var_seed),
+            "arrangement_plan_file": arrangement_plan_file,
             "part_files": result["written"],
             "merged_file": result["merged_path"],
         }
@@ -216,6 +243,16 @@ def _run_regenerate(args):
         time_sig=tuple(result["time_sig"]),
     )
 
+    arrangement_plan_file = _maybe_export_arrangement_plan_file(
+        args,
+        out_dir=out_dir,
+        params=params,
+        chords=chords,
+        bars=bars,
+        seed=seed,
+        filename="arrangement_plan_regenerate.json",
+    )
+
     regen_state = {
         "mode": "regenerate",
         "source_session": args.session,
@@ -229,6 +266,7 @@ def _run_regenerate(args):
         "bpm": result["bpm"],
         "time_sig": result["time_sig"],
         "arrangement_plan": summarize_arrangement_plan(params, chords, bars, seed),
+        "arrangement_plan_file": arrangement_plan_file,
         "part_files": list(final_part_map.values()),
         "merged_file": merged_path,
     }
@@ -295,6 +333,15 @@ def run(args):
         merge=args.merge,
     )
 
+    arrangement_plan_file = _maybe_export_arrangement_plan_file(
+        args,
+        out_dir=out_dir,
+        params=params,
+        chords=chords,
+        bars=args.bars,
+        seed=seed,
+    )
+
     state = {
         "mode": "normal",
         "chords": chords,
@@ -307,6 +354,7 @@ def run(args):
         "bars": args.bars,
         "params": params,
         "arrangement_plan": summarize_arrangement_plan(params, chords, args.bars, seed),
+        "arrangement_plan_file": arrangement_plan_file,
         "chords_generated": args.generate_chords,
         "part_files": result["written"],
         "merged_file": result["merged_path"],
@@ -339,6 +387,7 @@ def main():
     parser.add_argument("--regenerate", type=str, default=None, help="再生成するパート名(例: Drums,Bass)")
     parser.add_argument("--session", type=str, default=None, help="session.json のパス（regenerate用）")
     parser.add_argument("--variations", type=str, default=None, help="複数バリエーション(例: Folk,Anime,Rock,Weird)")
+    parser.add_argument("--save-arrangement-plan", action="store_true", help="arrangement_plan.json も出力する")
 
     args = parser.parse_args()
     run(args)
