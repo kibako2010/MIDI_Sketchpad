@@ -1,5 +1,6 @@
 from engine.event_safety import clip_events_to_song_bounds, compute_total_ticks
 from engine.generation_engine import GenerationEngine
+from generators.drums import DrumsGenerator
 from generators.fiddle import FiddleGenerator
 from generators.whistle import WhistleGenerator
 
@@ -61,6 +62,27 @@ def test_generation_engine_events_are_clipped_within_song_bounds():
             assert 0 <= start < total_ticks
             assert duration > 0
             assert start + duration <= total_ticks
+
+
+def test_drums_last_bar_prefers_closed_hihat_for_tail_safety():
+    bars = 2
+    drums = DrumsGenerator(
+        chords=["Am", "F"],
+        key="A",
+        scale="natural_minor",
+        params={"energy": 100, "density": 100, "humanize": 0, "rock": 0},
+        bars=bars,
+        time_sig=(6, 8),
+        seed=42,
+    )
+
+    events = drums.generate()
+    last_bar_start = drums.ticks_per_bar * (bars - 1)
+    hihat_open_note = 46
+
+    # 最終小節ではopen hihatを使わずclose優先にする。
+    last_bar_open_hits = [ev for ev in events if ev[0] >= last_bar_start and ev[2] == hihat_open_note]
+    assert not last_bar_open_hits
 
 
 def test_fiddle_and_whistle_notes_snap_to_scale_even_with_weirdness():
