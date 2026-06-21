@@ -20,7 +20,7 @@ from typing import Any, Dict, List
 from chord_generator import generate_chords
 from chord_parser import chords_from_text, estimate_key_and_scale, parse_midi_to_chords
 from engine.arrangement_plan import summarize_arrangement_plan
-from engine.event_safety import clip_events_to_song_bounds, compute_total_ticks
+from engine.event_safety import clip_events_to_song_bounds
 from engine.generation_engine import GenerationEngine
 from humanizer import apply_humanize
 from midi_renderer import export_merged_file, export_part_files
@@ -220,15 +220,19 @@ def _handle_generate(req: Dict[str, Any]) -> Dict[str, Any]:
         seed=seed,
     )
 
-    total_ticks = compute_total_ticks(480, time_sig_tuple, bars)
-
     all_events: Dict[str, List[tuple]] = {}
     for part_name, gen in generators.items():
         events = gen.generate()
         if params.get("post_humanize", False):
             events = apply_humanize(events, params, seed=seed)
-        events = clip_events_to_song_bounds(events, total_ticks)
         all_events[part_name] = events
+
+    all_events = clip_events_to_song_bounds(
+        all_events,
+        bars=bars,
+        ticks_per_beat=480,
+        time_sig=time_sig_tuple,
+    )
 
     enabled_parts = _enabled_rendered_parts(tracks)
     filtered_events = {name: evs for name, evs in all_events.items() if name in enabled_parts}

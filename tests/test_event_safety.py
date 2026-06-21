@@ -15,9 +15,14 @@ def test_clip_events_to_song_bounds_applies_all_safety_rules():
         (80, 9, -5, -3, 10),      # note/vel lower clamp
     ]
 
-    clipped = clip_events_to_song_bounds(events, total_ticks)
+    clipped_map = clip_events_to_song_bounds(
+        {"Drums": events},
+        bars=1,
+        ticks_per_beat=100,
+        time_sig=(1, 4),
+    )
 
-    assert clipped == [
+    assert clipped_map["Drums"] == [
         (0, 9, 127, 127, 20),
         (95, 9, 60, 90, 5),
         (80, 9, 0, 1, 10),

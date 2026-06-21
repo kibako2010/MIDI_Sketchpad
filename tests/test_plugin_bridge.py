@@ -73,7 +73,21 @@ def test_plugin_bridge_generate_all_tracks(tmp_path):
         assert key in produced, f"missing output key: {key}"
         assert Path(produced[key]).exists(), f"missing file: {produced[key]}"
 
-    assert Path(response["session"]).exists()
+    session_path = Path(response["session"])
+    assert session_path.exists()
+
+    session = json.loads(session_path.read_text(encoding="utf-8"))
+    assert session["key"] == "A"
+    assert session["scale"] == "natural_minor"
+
+    drums_mid = mido.MidiFile(produced["Drums"])
+    total_ticks = int(480 * 6 * 4 / 8) * 4
+    for tr in drums_mid.tracks:
+        abs_tick = 0
+        for msg in tr:
+            abs_tick += msg.time
+            if msg.type in ("note_on", "note_off"):
+                assert abs_tick <= total_ticks
 
 
 def test_plugin_bridge_generate_bass_only(tmp_path):
@@ -142,15 +156,19 @@ def test_plugin_bridge_generate_respects_key_scale_override(tmp_path):
         "create_timestamp_folder": False,
         "merge": False,
         "use_llm": False,
-        "key": "C",
-        "scale": "major",
+        "key": "A",
+        "scale": "natural_minor",
         "tracks": _all_tracks(False) | {"fiddle": {"enabled": True, "volume_db": 0.0}},
     }
 
     response = _run_bridge(tmp_path, request)
     assert response["ok"] is True
-    assert response["key"] == "C"
-    assert response["scale"] == "major"
+    assert response["key"] == "A"
+    assert response["scale"] == "natural_minor"
+
+    session = json.loads(Path(response["session"]).read_text(encoding="utf-8"))
+    assert session["key"] == "A"
+    assert session["scale"] == "natural_minor"
 
 
 def test_plugin_bridge_import_midi_chords(tmp_path):
