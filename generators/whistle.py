@@ -17,19 +17,20 @@ class WhistleGenerator(BaseGenerator):
                     notes.append(n)
         return sorted(set(notes))
 
-    def _chord_tones_in_scale(self, chord_name: str,
-                               scale_notes: List[int]) -> List[int]:
+    def _chord_tones_in_scale(self, chord_name: str, scale_notes: List[int]) -> List[int]:
         from chord_parser import parse_chord_name
         from config import NOTE_NAMES
         parsed = parse_chord_name(chord_name)
         if not parsed:
             return scale_notes[:4]
         root_name, ctype = parsed
-        name = root_name.replace("b","").replace("#","")
+        name = root_name.replace("b", "").replace("#", "")
         try:
             root_pc = NOTE_NAMES.index(name)
-            if "b" in root_name: root_pc = (root_pc - 1) % 12
-            elif "#" in root_name: root_pc = (root_pc + 1) % 12
+            if "b" in root_name:
+                root_pc = (root_pc - 1) % 12
+            elif "#" in root_name:
+                root_pc = (root_pc + 1) % 12
         except ValueError:
             root_pc = 0
         intervals = CHORD_INTERVALS.get(ctype, CHORD_INTERVALS["min"])
@@ -41,124 +42,93 @@ class WhistleGenerator(BaseGenerator):
         if note not in scale_notes:
             scale_notes = sorted(scale_notes + [note])
         idx = scale_notes.index(note)
-        up1 = scale_notes[min(idx+1, len(scale_notes)-1)]
-        up2 = scale_notes[min(idx+2, len(scale_notes)-1)]
-        up3 = scale_notes[min(idx+3, len(scale_notes)-1)]
-        dn1 = scale_notes[max(idx-1, 0)]
-        dn2 = scale_notes[max(idx-2, 0)]
+        up1 = scale_notes[min(idx + 1, len(scale_notes) - 1)]
+        up2 = scale_notes[min(idx + 2, len(scale_notes) - 1)]
+        up3 = scale_notes[min(idx + 3, len(scale_notes) - 1)]
+        dn1 = scale_notes[max(idx - 1, 0)]
+        dn2 = scale_notes[max(idx - 2, 0)]
         return up1, up2, up3, dn1, dn2
 
-    def _make_phrase(self, bar: int, chord_name: str,
-                     scale_notes: List[int],
-                     phrase_type: str,
-                     section: str) -> List[MidiEvent]:
+    def _make_phrase(self, bar: int, chord_name: str, scale_notes: List[int], phrase_type: str, section: str) -> List[MidiEvent]:
         events: List[MidiEvent] = []
-        et      = self._eighth_ticks()
-        bs      = self._bar_start(bar)
+        et = self._eighth_ticks()
+        bs = self._bar_start(bar)
         bar_end = bs + self.ticks_per_bar
 
         if not scale_notes:
             return events
 
         chord_tones = self._chord_tones_in_scale(chord_name, scale_notes)
-        core = chord_tones[len(chord_tones)//2]
+        core = chord_tones[len(chord_tones) // 2]
         up1, up2, up3, dn1, dn2 = self._get_neighbors(core, scale_notes)
 
-        # ---- ホイッスルはフィドルと対になる動きを持つ ----
-        # フィドルが上昇(A_rise)→ホイッスルは下降気味
-        # フィドルが下降(A_fall)→ホイッスルは上昇気味
-        # フィドルがdance→ホイッスルは長めのトーンで対比
-        # クライマックス→ホイッスルも上昇
-
         if section == "A_rise":
-            # フィドルが上昇するのでホイッスルは高い位置からカウンター
-            patterns = [
-                [up2, up1, core, up1, up2, up3],
-                [up3, up2, up1, up2, up1, core],
-                [up1, up2, up1, core, up1, up2],
-            ]
+            patterns = [[up2, up1, core, up1, up2, up3], [up3, up2, up1, up2, up1, core], [up1, up2, up1, core, up1, up2]]
         elif section == "A_fall":
-            # フィドルが下降するのでホイッスルは上昇で対比
-            patterns = [
-                [core, up1, up2, up1, up2, up3],
-                [dn1,  core, up1, up2, up3, up2],
-                [core, up2, up3, up2, up1, up2],
-            ]
+            patterns = [[core, up1, up2, up1, up2, up3], [dn1, core, up1, up2, up3, up2], [core, up2, up3, up2, up1, up2]]
         elif section in ("B_dance", "B_ornament"):
-            # ダンス系: 短いモチーフの繰り返し感
-            patterns = [
-                [up1, core, up1, core, up2, up1],
-                [up2, up1, up2, up1, core, up1],
-                [core, up1, core, up2, up1, core],
-            ]
+            patterns = [[up1, core, up1, core, up2, up1], [up2, up1, up2, up1, core, up1], [core, up1, core, up2, up1, core]]
         elif section == "climax":
-            # クライマックス: 高音域でユニゾン気味
-            patterns = [
-                [up2, up3, up2, up3, up2, up3],
-                [up1, up2, up3, up2, up3, up3],
-                [up3, up2, up3, up2, up1, up2],
-            ]
+            patterns = [[up2, up3, up2, up3, up2, up3], [up1, up2, up3, up2, up3, up3], [up3, up2, up3, up2, up1, up2]]
         else:
-            if phrase_type == "call":
-                patterns = [[core, up1, up2, up1, core, dn1]]
-            else:
-                patterns = [[up2, up1, core, dn1, core, core]]
+            patterns = [[core, up1, up2, up1, core, dn1]] if phrase_type == "call" else [[up2, up1, core, dn1, core, core]]
 
         motif = self.rng.choice(patterns)
 
-        # 音域クランプ
         lo, hi = 74, 98
-        motif  = [max(lo, min(hi, n)) for n in motif]
+        motif = [max(lo, min(hi, n)) for n in motif]
 
-        vel_base = int(72 + self.energy * 15)
+        vel_base = int(70 + self.energy * 16 + self.folk_v * 6)
         if section == "climax":
-            vel_base = int(88 + self.energy * 12)
+            vel_base = int(86 + self.energy * 14 + self.anime_v * 5)
+
+        # densityで休符制御（密度低いほど休む）
+        rest_prob = max(0.0, 0.42 - self.density * 0.38)
 
         for i, note in enumerate(motif):
-            tick   = bs + i * et
+            if i not in (0, 3) and self.rng.random() < rest_prob:
+                continue
+
+            tick = bs + i * et
             accent = (i == 0 or i == 3)
-            vel    = self._humanize_velocity(
-                vel_base + (10 if accent else -5)
-            )
+            vel = self._humanize_velocity(vel_base + (10 if accent else -5))
             if i == 5:
                 max_dur = bar_end - tick - 10
-                dur     = min(int(et * 1.3), max(10, max_dur))
+                dur = min(int(et * 1.3), max(10, max_dur))
             else:
                 dur = et - 15
 
-            events.append((
-                self._humanize_timing(tick),
-                CH_WHISTLE, note, vel, dur
-            ))
+            if self.weirdness_v > 0.6 and self.rng.random() < 0.12:
+                note = min(hi, note + 1)
+
+            events.append((self._humanize_timing(tick), CH_WHISTLE, note, vel, dur))
 
         return events
 
     def generate(self) -> List[MidiEvent]:
         events: List[MidiEvent] = []
-        root_pc     = self._root_pc()
+        root_pc = self._root_pc()
         scale_notes = self._build_scale(root_pc)
 
         if not scale_notes:
             return events
 
+        climax_start = 0.76 - (self.anime_v * 0.18)
+
         for bar in range(self.bars):
-            chord    = self._chord_for_bar(bar)
+            chord = self._chord_for_bar(bar)
             progress = bar / max(self.bars - 1, 1)
 
-            # フィドルと同じsectionロジックで対になる動きを作る
             if progress < 0.25:
                 section = "A_rise"
             elif progress < 0.5:
                 section = "A_fall"
-            elif progress < 0.75:
+            elif progress < max(0.55, climax_start):
                 section = self.rng.choice(["B_dance", "B_ornament"])
             else:
-                section = "climax" if self.anime_v > 0.6 else "A_rise"
+                section = "climax" if self.anime_v > 0.5 else "A_rise"
 
             phrase_type = "call" if bar % 2 == 0 else "response"
-            events.extend(
-                self._make_phrase(bar, chord, scale_notes,
-                                  phrase_type, section)
-            )
+            events.extend(self._make_phrase(bar, chord, scale_notes, phrase_type, section))
 
         return events
