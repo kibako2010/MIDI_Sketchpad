@@ -16,9 +16,12 @@ class DrumsGenerator(BaseGenerator):
         events: List[MidiEvent] = []
         et = self._eighth_ticks()
         rock_push = int(self.rock_v * 20)
+        song_end = self.ticks_per_bar * self.bars
 
         for bar in range(self.bars):
             bs = self._bar_start(bar)
+            bar_end = bs + self.ticks_per_bar
+            is_last_bar = (bar == self.bars - 1)
 
             for beat_idx, vel_base in [(0, 98 + rock_push), (3, 78 + rock_push // 2)]:
                 tick = bs + beat_idx * et
@@ -38,12 +41,22 @@ class DrumsGenerator(BaseGenerator):
                 tick = bs + i * et
                 accent = (i == 0 or i == 3)
                 vel = self._humanize_velocity(int(52 + self.density * 22) + (15 if accent else 0))
-                if self.energy > 0.8 and i in [2, 5]:
-                    note = DRUM["hihat_open"]
-                    dur = et * 2
+
+                # 終端ではclose優先。特に最終小節はopenを使わない。
+                can_open = self.energy > 0.8 and i == 2 and not is_last_bar
+                if can_open:
+                    tentative_dur = et * 2
+                    max_safe_dur = min(bar_end - tick, song_end - tick) - 5
+                    if max_safe_dur > et:
+                        note = DRUM["hihat_open"]
+                        dur = min(tentative_dur, max_safe_dur)
+                    else:
+                        note = DRUM["hihat_closed"]
+                        dur = et - 5
                 else:
                     note = DRUM["hihat_closed"]
                     dur = et - 5
+
                 events.append((self._humanize_timing(tick), CH_DRUMS, note, vel, dur))
 
             if bar % 4 == 0:
