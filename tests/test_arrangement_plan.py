@@ -73,6 +73,7 @@ def test_main_saves_arrangement_plan_into_session_json(tmp_path):
         regenerate=None,
         session=None,
         variations=None,
+        save_arrangement_plan=False,
     )
 
     main.run(args)
@@ -84,3 +85,38 @@ def test_main_saves_arrangement_plan_into_session_json(tmp_path):
     assert "arrangement_plan" in payload
     assert payload["arrangement_plan"]["version"] == ARRANGEMENT_PLAN_VERSION
     assert payload["arrangement_plan"]["storage"] == "summary"
+    assert payload["arrangement_plan_file"] is None
+
+
+def test_main_optionally_saves_full_arrangement_plan_file(tmp_path):
+    out_dir = tmp_path / "out_full"
+    args = argparse.Namespace(
+        chords="Dm | Bb | F | C",
+        midi=None,
+        prompt="folk adventure",
+        bars=4,
+        seed=321,
+        output=str(out_dir),
+        merge=False,
+        no_llm=True,
+        generate_chords=False,
+        test_llm=False,
+        regenerate=None,
+        session=None,
+        variations=None,
+        save_arrangement_plan=True,
+    )
+
+    main.run(args)
+
+    session_path = out_dir / "session.json"
+    payload = json.loads(session_path.read_text(encoding="utf-8"))
+
+    plan_file = out_dir / "arrangement_plan.json"
+    assert plan_file.exists()
+    assert payload["arrangement_plan_file"] == str(plan_file)
+
+    plan_payload = json.loads(plan_file.read_text(encoding="utf-8"))
+    assert plan_payload["schema"] == "arrangement_plan_document/v0.1"
+    assert plan_payload["summary"]["version"] == ARRANGEMENT_PLAN_VERSION
+    assert plan_payload["deterministic_inputs"]["seed"] == 321

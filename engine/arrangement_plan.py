@@ -105,6 +105,25 @@ def summarize_arrangement_plan(
     return build_arrangement_plan_summary(params, chords, bars, seed).to_dict()
 
 
+def build_arrangement_plan_document(
+    params: Dict[str, Any],
+    chords: List[str],
+    bars: int,
+    seed: int,
+) -> Dict[str, Any]:
+    summary = build_arrangement_plan_summary(params, chords, bars, seed).to_dict()
+    return {
+        "schema": "arrangement_plan_document/v0.1",
+        "summary": summary,
+        "deterministic_inputs": {
+            "params": params,
+            "chords": chords,
+            "bars": bars,
+            "seed": seed,
+        },
+    }
+
+
 def validate_arrangement_plan_summary(
     arrangement_plan: Dict[str, Any],
     params: Dict[str, Any],
