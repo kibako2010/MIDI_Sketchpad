@@ -126,6 +126,33 @@ def test_plugin_bridge_generate_chords(tmp_path):
     assert "|" in response["chords_text"]
 
 
+def test_plugin_bridge_generate_respects_key_scale_override(tmp_path):
+    out_dir = tmp_path / "out_override"
+    request = {
+        "version": 1,
+        "command": "generate",
+        "chords": "Am | F | C | G",
+        "prompt": "anime irish",
+        "bars": 4,
+        "bpm": 120,
+        "time_sig": [6, 8],
+        "seed": 123,
+        "humanize": 60,
+        "output_dir": str(out_dir),
+        "create_timestamp_folder": False,
+        "merge": False,
+        "use_llm": False,
+        "key": "C",
+        "scale": "major",
+        "tracks": _all_tracks(False) | {"fiddle": {"enabled": True, "volume_db": 0.0}},
+    }
+
+    response = _run_bridge(tmp_path, request)
+    assert response["ok"] is True
+    assert response["key"] == "C"
+    assert response["scale"] == "major"
+
+
 def test_plugin_bridge_import_midi_chords(tmp_path):
     midi_path = tmp_path / "source.mid"
     mid = mido.MidiFile(ticks_per_beat=480)

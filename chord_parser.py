@@ -136,23 +136,100 @@ def chords_from_text(text: str) -> List[str]:
     return [t.strip() for t in tokens if t.strip() and t.strip() != "|"]
 
 
-def estimate_key_and_scale(chords: List[str]) -> Tuple[str, str]:
-    minor_count = sum(1 for c in chords if "m" in c.lower() and "maj" not in c.lower())
-    ratio = minor_count / max(len(chords), 1)
+def _note_name_to_pc(name: str) -> int:
+    clean = name.replace("b", "").replace("#", "")
+    try:
+        pc = NOTE_NAMES.index(clean)
+    except ValueError:
+        return 0
+    if "b" in name:
+        pc = (pc - 1) % 12
+    elif "#" in name:
+        pc = (pc + 1) % 12
+    return pc
 
-    from collections import Counter
-    roots = []
-    for c in chords:
-        parsed = parse_chord_name(c)
-        if parsed:
-            roots.append(parsed[0])
-    if not roots:
+
+def estimate_key_and_scale(chords: List[str]) -> Tuple[str, str]:
+    from config import CHORD_INTERVALS, SCALES
+
+    parsed_chords = []
+    for chord in chords:
+        parsed = parse_chord_name(chord)
+        if not parsed:
+            continue
+        root_name, ctype = parsed
+        root_pc = _note_name_to_pc(root_name)
+        parsed_chords.append((root_pc, ctype))
+
+    if not parsed_chords:
         return ("C", "major")
 
-    most_common_root = Counter(roots).most_common(1)[0][0]
-    if ratio >= 0.5:
-        scale = "dorian" if ratio < 0.8 else "natural_minor"
-    else:
-        scale = "major"
+    first_root = parsed_chords[0][0]
+    last_root = parsed_chords[-1][0]
 
-    return (most_common_root, scale)
+    candidate_scales = ["major", "natural_minor", "dorian"]
+    best_score = float("-inf")
+    best = (0, "major")
+
+    for key_pc in range(12):
+        for scale_name in candidate_scales:
+            intervals = SCALES[scale_name]
+            scale_pcs = {(key_pc + iv) % 12 for iv in intervals}
+            score = 0.0
+
+            has_iv_major = False
+            has_bvii_major = False
+            has_bvi_major = False
+
+            for root_pc, ctype in parsed_chords:
+                chord_intervals = CHORD_INTERVALS.get(ctype, CHORD_INTERVALS["maj"])
+                chord_pcs = {(root_pc + iv) % 12 for iv in chord_intervals}
+                in_scale = sum(1 for pc in chord_pcs if pc in scale_pcs)
+                out_scale = len(chord_pcs) - in_scale
+
+                score += in_scale * 1.4
+                score -= out_scale * 1.8
+
+                if root_pc in scale_pcs:
+                    score += 0.2
+                else:
+                    score -= 0.8
+
+                is_minor_quality = ("min" in ctype and "maj" not in ctype)
+                is_major_quality = not is_minor_quality
+
+                if root_pc == key_pc:
+                    score += 1.5
+                    if scale_name == "major":
+                        score += 1.2 if is_major_quality else -1.2
+                    else:
+                        score += 1.2 if is_minor_quality else -1.2
+
+                if root_pc == (key_pc + 5) % 12 and is_major_quality:
+                    has_iv_major = True
+                if root_pc == (key_pc + 10) % 12 and is_major_quality:
+                    has_bvii_major = True
+                if root_pc == (key_pc + 8) % 12 and is_major_quality:
+                    has_bvi_major = True
+
+            if first_root == key_pc:
+                score += 0.8
+            if last_root == key_pc:
+                score += 1.4
+            if first_root == key_pc and last_root == key_pc:
+                score += 0.8
+
+            if scale_name == "dorian":
+                if has_iv_major:
+                    score += 0.9
+                if has_bvii_major:
+                    score += 0.4
+            if scale_name == "natural_minor" and has_bvi_major:
+                score += 0.9
+
+            if score > best_score:
+                best_score = score
+                best = (key_pc, scale_name)
+
+    key_name = NOTE_NAMES[best[0]]
+    return key_name, best[1]

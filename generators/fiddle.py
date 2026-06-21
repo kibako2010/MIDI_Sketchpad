@@ -115,10 +115,11 @@ class FiddleGenerator(BaseGenerator):
             else:
                 dur = et - 12
 
-            # weirdnessが高いと時々跳躍
+            # weirdnessが高いと時々跳躍（ただし必ずスケール内へ補正）
             if self.weirdness_v > 0.55 and self.rng.random() < 0.15:
-                note = min(hi, note + 2)
+                note = note + 2
 
+            note = self._nearest_scale_note(note, scale_notes, lo=lo, hi=hi)
             events.append((self._humanize_timing(tick), CH_FIDDLE, note, vel, dur))
 
         # folkに応じて装飾音頻度を制御
